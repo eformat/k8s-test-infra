@@ -65,6 +65,12 @@ func migSetMode(deviceHandle unsafe.Pointer, mode int) (nvml.Return, nvml.Return
 	if err := tx.Commit(); err != nil {
 		return migPersistFailed(dev, what, err), activation
 	}
+	// Disabling MIG tore down the board's whole partitioning, as it does on
+	// hardware; its capability surface goes with it. Enabling seeds nothing —
+	// a fresh board has no partitions to guard.
+	if mode == nvml.DEVICE_MIG_DISABLE {
+		migCapsWipeDevice(dev)
+	}
 	return nvml.SUCCESS, activation
 }
 
@@ -122,6 +128,11 @@ func migCreateGpuInstance(
 	if err := tx.Commit(); err != nil {
 		return handle, migPersistFailed(dev, what, err)
 	}
+	// The surface is staged inside the call, after the instance exists and
+	// its record has landed, so the caller's very next read — the CDI
+	// construction a DRA driver runs the moment create returns — finds it
+	// complete.
+	migCapsStageGPUInstance(dev, info.Id)
 	return handle, nvml.SUCCESS
 }
 
@@ -149,6 +160,7 @@ func migDestroyGpuInstance(handle unsafe.Pointer) nvml.Return {
 	if err := tx.Commit(); err != nil {
 		return migPersistFailed(dev, what, err)
 	}
+	migCapsRemoveGPUInstance(dev, info.Id)
 	return nvml.SUCCESS
 }
 
@@ -185,6 +197,7 @@ func migCreateComputeInstance(
 	if err := tx.Commit(); err != nil {
 		return handle, migPersistFailed(dev, what, err)
 	}
+	migCapsStageComputeInstance(dev, giInfo.Id, info.Id)
 	return handle, nvml.SUCCESS
 }
 
@@ -211,6 +224,7 @@ func migDestroyComputeInstance(handle unsafe.Pointer) nvml.Return {
 	if err := tx.Commit(); err != nil {
 		return migPersistFailed(dev, what, err)
 	}
+	migCapsRemoveComputeInstance(dev, giID, ciID)
 	return nvml.SUCCESS
 }
 
