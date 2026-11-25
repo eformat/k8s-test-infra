@@ -503,6 +503,24 @@ func (d *ConfigurableDevice) GetMaxMigDeviceCount() (int, nvml.Return) {
 	return count, nvml.SUCCESS
 }
 
+// migCapableState returns the device's MIG state when the board carries a MIG
+// capability surface, regardless of the current mode. Profile geometry
+// (GetGpuInstanceProfileInfo, GetGpuInstancePossiblePlacements) is static
+// capability data — real NVML serves it whether MIG mode is enabled or not —
+// and gating it on the mode strands partitionable announcement: a whole-GPU
+// allocation legitimately flips the mode off, and the next driver enumeration
+// would then drop the board's entire MIG surface. Callers must not hold st.mu.
+func (d *ConfigurableDevice) migCapableState() (*migState, nvml.Return) {
+	if d.mig != nil {
+		return nil, nvml.ERROR_NOT_SUPPORTED
+	}
+	st := d.migState
+	if st == nil || !st.supported {
+		return nil, nvml.ERROR_NOT_SUPPORTED
+	}
+	return st, nvml.SUCCESS
+}
+
 // migEnabled reports whether the device can currently be partitioned. Callers
 // must not hold st.mu.
 func (d *ConfigurableDevice) migEnabled() (*migState, nvml.Return) {
@@ -866,11 +884,15 @@ func (d *ConfigurableDevice) GetAttributes() (nvml.DeviceAttributes, nvml.Return
 // =============================================================================
 
 // GetGpuInstanceProfileInfo returns a GPU instance profile the board supports.
+//
+// Geometry, not state: served from the capability surface regardless of the
+// current MIG mode (see migCapableState). A whole-GPU allocation flips the
+// mode off; the next enumeration must still see the board's profile table.
 func (d *ConfigurableDevice) GetGpuInstanceProfileInfo(profileID int) (nvml.GpuInstanceProfileInfo, nvml.Return) {
 	if ret := d.handleLookupReturn(); ret != nvml.SUCCESS {
 		return nvml.GpuInstanceProfileInfo{}, ret
 	}
-	st, ret := d.migEnabled()
+	st, ret := d.migCapableState()
 	if ret != nvml.SUCCESS {
 		return nvml.GpuInstanceProfileInfo{}, ret
 	}
@@ -890,13 +912,16 @@ func (d *ConfigurableDevice) GetGpuInstanceProfileInfo(profileID int) (nvml.GpuI
 }
 
 // GetGpuInstancePossiblePlacements returns the slice offsets a profile can occupy.
+//
+// Geometry, not state: served from the capability surface regardless of the
+// current MIG mode (see migCapableState).
 func (d *ConfigurableDevice) GetGpuInstancePossiblePlacements(
 	info *nvml.GpuInstanceProfileInfo,
 ) ([]nvml.GpuInstancePlacement, nvml.Return) {
 	if info == nil {
 		return nil, nvml.ERROR_INVALID_ARGUMENT
 	}
-	st, ret := d.migEnabled()
+	st, ret := d.migCapableState()
 	if ret != nvml.SUCCESS {
 		return nil, ret
 	}
