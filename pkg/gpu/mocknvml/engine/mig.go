@@ -512,10 +512,16 @@ func (d *ConfigurableDevice) GetMaxMigDeviceCount() (int, nvml.Return) {
 // would then drop the board's entire MIG surface. Callers must not hold st.mu.
 func (d *ConfigurableDevice) migCapableState() (*migState, nvml.Return) {
 	if d.mig != nil {
+		debugLog("[MIG] migCapableState: d.mig != nil (MIG device handle, not a board)\n")
 		return nil, nvml.ERROR_NOT_SUPPORTED
 	}
 	st := d.migState
-	if st == nil || !st.supported {
+	if st == nil {
+		debugLog("[MIG] migCapableState: migState nil\n")
+		return nil, nvml.ERROR_NOT_SUPPORTED
+	}
+	if !st.supported {
+		debugLog("[MIG] migCapableState: supported=false (mode=%d pending=%d profiles=%d)\n", st.mode, st.pending, len(st.profiles.GpuInstanceProfiles))
 		return nil, nvml.ERROR_NOT_SUPPORTED
 	}
 	return st, nvml.SUCCESS
@@ -889,7 +895,10 @@ func (d *ConfigurableDevice) GetAttributes() (nvml.DeviceAttributes, nvml.Return
 // current MIG mode (see migCapableState). A whole-GPU allocation flips the
 // mode off; the next enumeration must still see the board's profile table.
 func (d *ConfigurableDevice) GetGpuInstanceProfileInfo(profileID int) (nvml.GpuInstanceProfileInfo, nvml.Return) {
+	debugLog("[MIG] GetGpuInstanceProfileInfo(%d) entered: supported=%v mode=%d profiles=%d\n",
+		profileID, d.migState != nil && d.migState.supported, d.migState.mode, len(d.migState.profiles.GpuInstanceProfiles))
 	if ret := d.handleLookupReturn(); ret != nvml.SUCCESS {
+		debugLog("[MIG] GetGpuInstanceProfileInfo(%d): handleLookupReturn=%d\n", profileID, ret)
 		return nvml.GpuInstanceProfileInfo{}, ret
 	}
 	st, ret := d.migCapableState()
@@ -901,6 +910,8 @@ func (d *ConfigurableDevice) GetGpuInstanceProfileInfo(profileID int) (nvml.GpuI
 	}
 	info, ok := st.profiles.GpuInstanceProfiles[profileID]
 	if !ok {
+		debugLog("[MIG] GetGpuInstanceProfileInfo(%d): miss — supported=%v mode=%d pending=%d tableSize=%d keys=%v\n",
+			profileID, st.supported, st.mode, st.pending, len(st.profiles.GpuInstanceProfiles), keysOf(st.profiles.GpuInstanceProfiles))
 		return nvml.GpuInstanceProfileInfo{}, nvml.ERROR_NOT_SUPPORTED
 	}
 	// Id stays as go-nvml's tables carry it: the profile enum. The board's own
@@ -1515,4 +1526,13 @@ func (st *migState) placementOfferedLocked(giProfileID int, placement nvml.GpuIn
 		}
 	}
 	return false
+}
+
+// keysOf is a debug helper for the GetGpuInstanceProfileInfo miss log.
+func keysOf(m map[int]nvml.GpuInstanceProfileInfo) []int {
+	keys := make([]int, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

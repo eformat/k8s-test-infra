@@ -129,7 +129,9 @@ func gpuInstanceProfileEnum(handle unsafe.Pointer, reportedID C.uint) (int, nvml
 func nvmlDeviceGetGpuInstanceProfileInfo(
 	device C.nvmlDevice_t, profile C.uint, info *C.nvmlGpuInstanceProfileInfo_t,
 ) C.nvmlReturn_t {
+	debugLog("[BRIDGE] nvmlDeviceGetGpuInstanceProfileInfo entered (profile=%d)\n", int(profile))
 	if ret, ok := bridgeVersionCheck("nvmlDeviceGetGpuInstanceProfileInfo"); !ok {
+		debugLog("[BRIDGE] nvmlDeviceGetGpuInstanceProfileInfo: version check rejected (%d)\n", int(ret))
 		return ret
 	}
 	if info == nil {

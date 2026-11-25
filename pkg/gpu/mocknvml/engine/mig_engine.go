@@ -85,8 +85,10 @@ func (e *Engine) DeviceGetGpuInstanceProfileInfo(
 ) (nvml.GpuInstanceProfileInfo, nvml.Return) {
 	dev := e.LookupConfigurableDevice(handle)
 	if dev == nil {
+		debugLog("[MIG] DeviceGetGpuInstanceProfileInfo(%d): LookupConfigurableDevice nil\n", profile)
 		return nvml.GpuInstanceProfileInfo{}, nvml.ERROR_INVALID_ARGUMENT
 	}
+	debugLog("[MIG] DeviceGetGpuInstanceProfileInfo(%d): dispatching to device %d\n", profile, dev.index)
 	return dev.GetGpuInstanceProfileInfo(profile)
 }
 
@@ -181,12 +183,19 @@ func (e *Engine) DeviceGpuInstanceReportedProfileID(handle unsafe.Pointer, profi
 }
 
 // migStateOf narrows a device handle to its MIG state.
+//
+// Capability, not state: every caller resolves GEOMETRY (profile-ID tables,
+// placements) or read-only lookups, and those are static capability data —
+// see migCapableState. A whole-GPU allocation flips the board's mode off and
+// the next enumeration must still resolve IDs through these tables; gating
+// here on the current mode made every profile query answer NOT_SUPPORTED for
+// a mode-off board and blanked the driver's entire MIG announcement.
 func (e *Engine) migStateOf(handle unsafe.Pointer) (*migState, nvml.Return) {
 	dev := e.LookupConfigurableDevice(handle)
 	if dev == nil {
 		return nil, nvml.ERROR_INVALID_ARGUMENT
 	}
-	return dev.migEnabled()
+	return dev.migCapableState()
 }
 
 // DeviceGetGpuInstancePossiblePlacements returns the slice offsets a profile
