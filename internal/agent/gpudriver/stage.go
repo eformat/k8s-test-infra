@@ -12,8 +12,10 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"io/fs"
 
 	"go.uber.org/zap"
+	"golang.org/x/sys/unix"
 
 	"github.com/NVIDIA/k8s-test-infra/internal/fsutil"
 
@@ -102,6 +104,37 @@ func pruneGPUNodes(devRoot string, wanted map[string]bool) error {
 
 // stageNVMLShim installs the mock libnvidia-ml so that nvidia-smi, the device
 // plugin, and NVML-using workloads can dlopen it without a real kernel driver.
+// containerSELinuxLabel is the file type the container runtime policy lets
+// restricted container processes open. The staging runs as a privileged root
+// process whose files otherwise inherit the agent volume's
+// container_var_lib_t — a type the restricted pods that mount the driver tree
+// through CDI contracts cannot open, so every in-container nvidia-smi /
+// libnvml access answered EACCES until the tree carries this label.
+const containerSELinuxLabel = "system_u:object_r:container_file_t:s0"
+
+// labelForContainers applies containerSELinuxLabel to the agent's whole
+// staging area. The CDI contracts mount from across the tree — dev nodes,
+// usr/lib64, usr/bin, usr/local/bin (the lsmod shim), config (as
+// /etc/nvml-mock) and the simulated sysfs under sys/ — and any path still on
+// the volume's container_var_lib_t is unreadable to the restricted pods the
+// contracts feed, so label the root rather than maintain a per-dir list.
+// Called from Stage, and again from Apply because the reconciler rewrites
+// config/ and sys/ between stagings; files created later inherit the
+// directory's label. Best-effort per entry: on hosts without SELinux the
+// setxattr fails per path and staging continues.
+func labelForContainers(h *host.Host) error {
+	root := h.RootPath()
+	return filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // unreadable entry: skip, don't fail staging
+		}
+		if lerr := unix.Lsetxattr(path, "security.selinux", []byte(containerSELinuxLabel), 0); lerr != nil {
+			zap.L().Debug("selinux label not applied", zap.String("path", path), zap.Error(lerr))
+		}
+		return nil
+	})
+}
+
 func stageNVMLShim(ctx context.Context, h *host.Host, state *agent.State) error {
 	matches, _ := filepath.Glob("/usr/local/lib/libnvidia-ml.so.*.*.*")
 	if len(matches) == 0 {

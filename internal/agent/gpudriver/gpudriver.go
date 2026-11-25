@@ -66,6 +66,12 @@ func (s *Simulator) Stage(ctx context.Context, state *agent.State) error {
 		return err
 	}
 
+	// Label before declaring ready: the CDI contracts mount these paths into
+	// restricted pods, which cannot open container_var_lib_t-labeled files.
+	if err := labelForContainers(s.host); err != nil {
+		return err
+	}
+
 	zap.L().Info("simulator staged", zap.String("simulator", name))
 	return nil
 }
@@ -122,6 +128,13 @@ func (s *Simulator) Apply(_ context.Context, _ *agent.State) error {
 	driverRoot := s.host.RunPath("nvidia/driver")
 	if err := fsutil.BindMount(s.host.RootPath("driver"), driverRoot); err != nil {
 		return fmt.Errorf("bind mount %s: %w", driverRoot, err)
+	}
+
+	// Relabel on every apply: the reconciler rewrites config/ files between
+	// stagings and those writes inherit the volume's container_var_lib_t,
+	// which restricted pods cannot open.
+	if err := labelForContainers(s.host); err != nil {
+		return err
 	}
 
 	s.ready.Store(true)
