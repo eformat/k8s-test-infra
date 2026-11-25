@@ -706,6 +706,14 @@ var migProfileNameSize = regexp.MustCompile(`^\d+g\.(\d+)gb`)
 // holds 23344, 1.2 GiB short. The shortfall scales with the partition, so the
 // slack does too, with a floor for the small ones.
 //
+// H200 holds proportionally more back than the boards this slack was sized
+// for: validated against real hardware (8x H200 141GB, driver 580.126.20,
+// 2026-11-25), the driver reports 16.00 GiB usable for the 1g.18gb profile —
+// 11% short of its name — and 32.50 GiB for 2g.35gb, 9% short. A 12.5% slack
+// (named/8) covers the real H200 table with margin while still refusing gross
+// contradictions: the 3g.139gb-beside-92160 case this check exists for fails
+// at 34% short.
+//
 // A name that does not spell a size is left alone: nothing else constrains the
 // spelling, and inventing a constraint here would refuse a board whose
 // partitions NVIDIA names some other way.
@@ -720,7 +728,7 @@ func validateMIGProfileMemoryMatchesName(spec MIGProfileSpec) error {
 	}
 
 	namedMB := namedGB * 1024
-	slack := max(namedMB/16, 1024)
+	slack := max(namedMB/8, 1024)
 	if spec.MemoryMB+slack < namedMB || spec.MemoryMB > namedMB+slack {
 		return fmt.Errorf("memory_mb %d does not hold the %d GB the name %q advertises",
 			spec.MemoryMB, namedGB, spec.Name)
